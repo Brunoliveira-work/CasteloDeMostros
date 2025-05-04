@@ -1,8 +1,7 @@
-frame 0 2 13 19
-frame 16 2 14 19
-frame 48 2 15 18
-frame 64 2 15 19
-frame 80 2 14 19
-frame 96 2 15 20
-frame 112 2 15 21
-
+idle 0 2 14 20
+idle 16 2 15 20
+idle 32 3 15 19
+move 48 2 15 20
+move 64 2 15 20
+move 80 1 15 21
+move 96 0 15 22
