@@ -1,91 +1,103 @@
 import pyxel
-import time
-from core.game.entities.player import Player
-from core.game.levels.map_generator import MapGenerator
-from core.game.systems.game_state import GameState
-from core.game.systems.obstacle_controller import ObstacleController
-from core.game.entities.obstacle import Obstacle
+import multiprocessing as mp
+from typing import Dict
+from core.game.systems.game_server import GameServer
+from core.game.systems.network_manager import NetworkManager
+from core.game.ui.screens.menu_screen import MenuScreen
+from core.game.ui.screens.join_screen import JoinScreen
+from core.game.ui.screens.host_lobby_screen import HostLobbyScreen
+from core.game.ui.screens.game_screen import GameScreen
+from core.game.systems.game_state_server import GameStateServer
 
-class MainGame:
+class GameClient:
     def __init__(self):
-        self.screen_width = 320
-        self.screen_height = 240
-        self.is_paused = False
-        pyxel.init(self.screen_width, self.screen_height, title="Dino Multiplayer Clone", fps=60)
+        self.network = NetworkManager()
+        self.network_server = GameServer()
+        self.game_state_server = GameStateServer()
+        self.player_id = None
         
-        # Carrega os assets
+        # Initialize screens
+        self.screens = {
+            "menu": MenuScreen(self),
+            "join": JoinScreen(self),
+            "host_lobby": HostLobbyScreen(self),
+            "game": GameScreen(self)
+        }
+        self.current_screen = "menu"
+        
+        # Setup Pyxel
+        self._initialize_pyxel()
+        pyxel.run(self.update, self.draw)
+
+    def _initialize_pyxel(self):
+        """Initialize Pyxel resources"""
+        pyxel.init(320, 240, title="Castelo de Monstros", fps=60)
         pyxel.image(0).load(0, 0, "../assets/animations/player/banco_0.png")
         pyxel.image(1).load(0, 0, "../assets/animations/player/castle-tileset.png")
-        
-        # Inicializa o estado do jogo
-        self.game_state = GameState()
-        
-        # Passa game_state para os outros sistemas
-        self.map = MapGenerator(self.game_state)
-        self.player = Player(100, self.map.get_ground_y(), self.game_state)
-        
-        self.score = 0
-        self.last_time = time.time()
-        self.last_speed_increase = time.time()
-        
-        self.obstacle_controller = ObstacleController(
-            self.game_state,
-            self.map.get_ground_y()
-        )
-        
-        pyxel.run(self.update, self.draw)
-        
-        pyxel.run(self.update, self.draw)
-    
+
+    # Screen transition methods
+    def show_menu(self):
+        """Return to main menu"""
+        self.current_screen = "menu"
+        if self.network.host:
+            self.network_server.stop()
+        self.network.close()
+
+    def show_join_screen(self):
+        """Show the join server screen"""
+        self.current_screen = "join"
+
+    def show_host_lobby(self):
+        """Show the host lobby screen"""
+        self.current_screen = "host_lobby"
+
+    def show_game_screen(self):
+        """Show the game screen"""
+        self.current_screen = "game"
+
+    def start_host(self):
+        """Start hosting a game"""
+        ip, port = self.network_server.start()
+        self.network.start_host(ip, port)
+        self.player_id = self.game_state_server.add_player()
+        self.show_host_lobby()
+
+    def join_server(self, ip: str, port: int):
+        """Join an existing game server"""
+        self.network.join_server(ip, port)
+        self.player_id = self.game_state_server.add_player()
+        self.show_host_lobby()
+
+    def start_game(self):
+        """Start the game (host only)"""
+        if self.network.host:
+            self.network.start_game()
+            self.show_game_screen()
+
     def update(self):
-        if self.is_paused:
-            return  # Não atualiza nada se o jogo está pausado
-        current_time = time.time()
-        dt = current_time - self.last_time
-        self.last_time = current_time
-        
-        # Aumenta a velocidade gradualmente a cada 10 segundos
-        # if current_time - self.last_speed_increase > 10:
-        #     self.game_state.increase_speed(0.05)
-        #     self.last_speed_increase = current_time
-        
-        # Atualiza sistemas com delta time ajustado pela velocidade
-         # Limita o dt para evitar saltos grandes
-        dt = min(dt, 0.033)  # ~30 FPS mínimo
-        
-        # Atualiza sistemas
-        adjusted_dt = dt * self.game_state.speed_multiplier
-        self.map.update(adjusted_dt)
-        self.player.update(self.map.get_ground_y(), adjusted_dt)
-        self.obstacle_controller.update(adjusted_dt)
-         # Verifica colisões
-        self.check_collisions()
-        # Atualiza pontuação
-        self.score += 2 * dt * self.game_state.speed_multiplier
-    
+        """Update current screen"""
+        self.screens[self.current_screen].update()
+
     def draw(self):
-        pyxel.cls(7)
-        self.map.draw(pyxel.width, pyxel.height)
-        self.obstacle_controller.draw()
-        self.player.draw()
-        
-        # Mostra velocidade atual
-        pyxel.text(10, 10, f"SCORE: {int(self.score)}", 0)
-        pyxel.text(10, 20, f"SPEED: {self.game_state.speed_multiplier:.1f}x", 0)
-        # Mostra mensagem de pausa se colidiu
-        if self.is_paused:
-            pyxel.text(self.screen_width//2 - 30, self.screen_height//2, "GAME OVER", pyxel.COLOR_RED)
-    
-    def check_collisions(self):
-        """Verifica colisões entre player e obstáculos"""
-        for obstacle in self.obstacle_controller.obstacles:
-            if self.player.check_collision(obstacle):
-                self.game_paused()
-                break
-    
-    def game_paused(self):
-        """Pausa o jogo quando ocorre colisão"""
-        self.is_paused = True
-        print("Jogo pausado devido a colisão!")  # Você pode substituir por uma mensagem na tela
-    
-MainGame()
+        """Draw current screen"""
+        self.screens[self.current_screen].draw()
+
+    def close(self):
+        """Cleanup resources"""
+        if self.network.host:
+            self.network_server.stop()
+        self.network.close()
+        pyxel.quit()
+
+def main():
+    client = GameClient()
+    try:
+        while True:
+            pass
+    except KeyboardInterrupt:
+        client.close()
+
+if __name__ == "__main__":
+    # Required for multiprocessing on Windows
+    mp.freeze_support()
+    main()
